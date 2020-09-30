@@ -27,10 +27,7 @@
 #include <pcl/conversions.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/surface/gp3.h>
-// #include <tf2_ros/buffer.h>
-// #include <tf2_ros/transform_listener.h>
 #include <tf/transform_broadcaster.h>
-// #include <tf2_eigen/tf2_eigen.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <pcl/io/vtk_io.h>
 #include <pcl/PolygonMesh.h>
@@ -48,14 +45,17 @@
 #include "sensor_msgs/Imu.h"
 #include <math.h>
 #include <visualization_msgs/Marker.h>
-
-// #include <tf2/LinearMath/Quaternion.h>
 #include <tf/transform_listener.h>
 #include <boost/thread/mutex.hpp>
-
-//#include "imu_transformer/tf2_sensor_msgs.h"
-
-// #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
+#include <OGRE/OgreSceneNode.h>
+#include <OGRE/OgreSceneManager.h>
+#include <OGRE/OgreVector3.h>
+#include <rviz/visualization_manager.h>
+//#include <rviz/properties/color_property.h>
+#include <rviz/properties/float_property.h>
+#include <rviz/properties/int_property.h>
+//#include <rviz/frame_manager.h>
+#include <rviz/ogre_helpers/arrow.h>
 
 using namespace std::chrono_literals;
 class ShapeFinderNode
@@ -71,7 +71,8 @@ public:
 
     std::string cloud_topic = "objects";
     pub_.advertise(nh_, cloud_topic.c_str(), 1);
-    marker_pub = nh_.advertise<visualization_msgs::Marker>("imu_out", 1);
+    gravity_marker_pub = nh_.advertise<visualization_msgs::Marker>("imu_out", 1);
+    normal_marker_pub = nh_.advertise<visualization_msgs::Marker>("normal_out", 1);
     //odom_trans.child_frame_id = "base_link";
     sub_ = nh_.subscribe("point_cloud_in", 1, &ShapeFinderNode::cloudCallback, this);
     config_server_.setCallback(boost::bind(&ShapeFinderNode::dynReconfCallback, this, _1, _2));
@@ -206,7 +207,8 @@ public:
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_c(new pcl::PointCloud<pcl::PointXYZ>);
     size_t size_cloud = cloud_cluster->size();
     int big_plane = 0;
-    int horizontal = 0;
+    int horizontal_floor = 0;
+    int horizontal_ceiling = 0;
     int vertical = 0;
 
     printf("cluster %d, size: %d\n", j, size_cloud);
@@ -245,37 +247,75 @@ public:
       if (cloud_colored_cluster->size() > big_plane_size)
       {
         big_plane = 1;
+        Eigen::Matrix3f covariance_matrix;
+        Eigen::Vector4f xyz_centroid;
+        compute3DCentroid(*cloud_p, xyz_centroid);
+        computeCovarianceMatrix(*cloud_p, xyz_centroid, covariance_matrix);
+        // Create the normal estimation class, and pass the input dataset to it
+        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
+        ne.setInputCloud(cloud_p);
+        // Create an empty kdtree representation, and pass it to the normal estimation object.
+        // Its content will be filled inside the object, based on the given input dataset (as no other search surface is given).
+        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+        ne.setSearchMethod(tree);
+        // Output datasets
+        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
+        // Use all neighbors in a sphere of radius 3cm
+        ne.setRadiusSearch(0.03);
+        // Compute the features
+        ne.compute(*cloud_normals);
+        int pnr = cloud_normals->size() / 2;
+        Eigen::Vector3f normalvector(cloud_normals->points[pnr].normal_x, cloud_normals->points[pnr].normal_y, cloud_normals->points[pnr].normal_z);
+        normalvector.normalize();
+        Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+
+        /*visualization_msgs::Marker normal_marker;
+        uint32_t shape = visualization_msgs::Marker::ARROW;
+        normal_marker.ns = "basic_shapes";
+        normal_marker.id = 1;
+        normal_marker.type = shape;
+        normal_marker.action = visualization_msgs::Marker::ADD;
+        normal_marker.pose.position.x = 0;
+        normal_marker.pose.position.y = 0;
+        normal_marker.pose.position.z = 0;
+        geometry_msgs::Point pt;
+        pt.x = centroid(0);
+        pt.y = centroid(1);
+        pt.z = centroid(2);
+        normal_marker.points.push_back(pt);
+        pt.x = centroid(0) + normalvector(0);
+        pt.y = centroid(1) + normalvector(1);
+        pt.z = centroid(2) + normalvector(2);
+        normal_marker.points.push_back(pt);
+
+        normal_marker.scale.x = 0.05;
+        normal_marker.scale.y = 0.1;
+        normal_marker.scale.z = 0.05;
+
+        normal_marker.color.r = 0.0f;
+        normal_marker.color.g = 0.0f;
+        normal_marker.color.b = 1.0f;
+        normal_marker.color.a = 0.5;
+
+        normal_marker.lifetime = ros::Duration();
+        normal_marker.header.frame_id = tf_frame;
+        normal_marker.header.stamp = ros::Time::now();
+
+        normal_marker_pub.publish(normal_marker);*/
+
+        float angle = acos(gravity.dot(normalvector));
+        std::cout << "gravity: " << gravity[0] << ", " << gravity[1] << ", " << gravity[2] << std::endl;
+        std::cout << "normal: " << normalvector[0] << ", " << normalvector[1] << ", " << normalvector[2] << std::endl;
+        std::cout << "angle: " << angle << std::endl;
+        std::cout << "cosangle: " << gravity.dot(normalvector) << std::endl;
+
+        if (angle > PI - hv_tolerance)
+          horizontal_floor = 1;
+        if (angle < hv_tolerance)
+          horizontal_ceiling = 1;
+        if (angle > PI / 2 - hv_tolerance && angle < PI / 2 + hv_tolerance)
+          vertical = 1;
       }
-      Eigen::Matrix3f covariance_matrix;
-      Eigen::Vector4f xyz_centroid;
-      compute3DCentroid(*cloud_p, xyz_centroid);
-      computeCovarianceMatrix(*cloud_p, xyz_centroid, covariance_matrix);
-      // Create the normal estimation class, and pass the input dataset to it
-      pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
-      ne.setInputCloud(cloud_p);
-      // Create an empty kdtree representation, and pass it to the normal estimation object.
-      // Its content will be filled inside the object, based on the given input dataset (as no other search surface is given).
-      pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-      ne.setSearchMethod(tree);
-      // Output datasets
-      pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-      // Use all neighbors in a sphere of radius 3cm
-      ne.setRadiusSearch(0.03);
-      // Compute the features
-      ne.compute(*cloud_normals);
-
-      double PI = 3.14159265;
-      int pnr = cloud_normals->size() / 2;
-      Eigen::Vector3f normalvector(cloud_normals->points[pnr].normal_x, cloud_normals->points[pnr].normal_y, cloud_normals->points[pnr].normal_z);
-      /*float angle = acos(gravity.dot(normalvector));
-      std::cout << "gravity: " << gravity[0] << ", " <<gravity[1] <<", "<<gravity[2]<< std::endl;
-       std::cout << "normal: " << normalvector[0] << ", " <<normalvector[1] <<", "<<normalvector[2]<< std::endl;
-       std::cout << "angle: " << angle << std::endl;
-
-      if (angle < PI / 12 && angle > PI - PI / 12)
-        horizontal = 1;
-      if (angle > PI / 2 - PI / 12 && angle < PI / 2 + PI / 12)
-        vertical = 1;*/
     }
 
     if ((overlap_c > overlap_s) && (overlap_c > overlap_p) && (overlap_c > th) && (size_cloud_c > min_cloud_size))
@@ -284,13 +324,66 @@ public:
       pcl::copyPointCloud(*cloud_c, *cloud_colored_cluster);
     }
 
-    std::uint8_t r = 255 * (cluster_shape == 2), g = 255 * (cluster_shape == 1), b = 255 * (cluster_shape == 3);
-    if (big_plane)
+    std::uint8_t r = 0, g = 0, b = 0;
+    switch (cluster_shape)
     {
-      r = 125 * vertical;
-      g = 125;
-      b = 125 * horizontal;
+    case 0:
+    {
+      r = 255;
+      g = 255;
+      b = 255; // white
+      break;
     }
+    case 1:
+    {
+      if (big_plane)
+      {
+        r = 0;
+        g = 125;
+        b = 0; // dark green
+        if (vertical)
+        {
+          r = 255;
+          g = 255;
+          b = 0; //yellow
+        }
+        if (horizontal_floor)
+        {
+          r = 178;
+          g = 102;
+          b = 255; // purple
+        }
+        if (horizontal_ceiling)
+        {
+          r = 255;
+          g = 0;
+          b = 153; //magenta
+        }
+      }
+      else
+      {
+        r = 0;
+        g = 255;
+        b = 0; // light green
+      }
+      break;
+    }
+    case 2:
+    {
+      r = 255;
+      g = 0;
+      b = 0; // red
+      break;
+    }
+    case 3:
+    {
+      r = 0;
+      g = 0;
+      b = 255; // blue
+      break;
+    }
+    }
+
     std::uint32_t rgb = ((std::uint32_t)r << 16 | (std::uint32_t)g << 8 | (std::uint32_t)b);
     //cloud_colored_cluster->points.rgb = *reinterpret_cast<float *>(&rgb);
     printf("cluster+shape=%d\nrgb:%d,%d,%d\n", cluster_shape, r, g, b);
@@ -437,6 +530,7 @@ public:
     th = config.overlap_threshold;
     big_plane_size = config.big_plane_size;
     min_cloud_size = config.min_cloud_size;
+    hv_tolerance = config.hv_tolerance * PI / 180;
   }
 
   void
@@ -447,103 +541,56 @@ public:
 
   void imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   {
-    //ROS_INFO("Imu Seq: [%d]", msg->header.seq);
     ROS_INFO("Imu Orientation x: [%f], y: [%f], z: [%f], w: [%f]", msg->orientation.x, msg->orientation.y, msg->orientation.z, msg->orientation.w);
-    double g = 9.89;
-    double PI = 3.14159265;
     la_x = msg->linear_acceleration.x;
     la_y = msg->linear_acceleration.y;
     la_z = msg->linear_acceleration.z;
     gravity[0] = la_x;
     gravity[1] = la_y;
     gravity[2] = la_z;
-    std::string frame = msg->header.frame_id;
-    ros::Time time = msg->header.stamp;
-    /*double angle_x=atan(la_z/la_y);
-   double angle_y=atan(la_x/la_z);
-   double angle_z=atan(la_y/la_x);
-tf2::Quaternion q;
-q.normalize();
-q.setRPY( angle_x, angle_y, angle_z );
-ROS_INFO_STREAM(angle_x);
-ROS_INFO_STREAM(angle_y);
-ROS_INFO_STREAM(angle_z);
-ROS_INFO_STREAM(q);*/
+    gravity.normalize();
 
-    /*rviz::DisplayContext* context_;
-    Ogre::Quaternion orientation;
-    Ogre::Vector3 position;
-    context_->getFrameManager()->getTransform(msg->header.frame_id,
-                                              msg->header.stamp,
-                                              position, orientation);*/
+    const geometry_msgs::Vector3 &a = msg->linear_acceleration;
+    Eigen::Vector3f acc(a.x, a.y, a.z);
 
-    tf::Quaternion bt_orientation(msg->orientation.x, msg->orientation.y, msg->orientation.z, msg->orientation.w);
-    tf::Vector3 bt_position(0.0, 0.0, 0.0);
-    if (bt_orientation.x() == 0.0 && bt_orientation.y() == 0.0 && bt_orientation.z() == 0.0 && bt_orientation.w() == 0.0)
-    {
-      bt_orientation.setW(1.0);
-    }
-
-    tf::Stamped<tf::Pose> pose_in(tf::Transform(bt_orientation, bt_position), time, frame);
-    tf::Stamped<tf::Pose> pose_out;
-
-    // convert pose into new frame
-    boost::shared_ptr<tf::TransformListener> tf_;
-    tf_.reset(new tf::TransformListener(ros::NodeHandle(), ros::Duration(10*60), true));
-    try
-    {
-      tf_->transformPose(tf_frame, pose_in, pose_out);
-    }
-    catch (std::runtime_error &e)
-    {
-      ROS_DEBUG("Error transforming from frame '%s' to frame '%s': %s", frame.c_str(), tf_frame.c_str(), e.what());
-    }
-    bt_orientation = pose_out.getRotation();
-
-    visualization_msgs::Marker marker;
+    visualization_msgs::Marker gravity_marker;
     uint32_t shape = visualization_msgs::Marker::ARROW;
-    marker.ns = "basic_shapes";
-    marker.id = 1;
-    marker.type = shape;
-    marker.action = visualization_msgs::Marker::ADD;
-    //Eigen::Affine3f rotation;
-    //pcl::getTransformationFromTwoUnitVectors(gravity.unitOrthogonal(), gravity, rotation);
-    //Eigen::Quaternionf qu(rotation.inverse().rotation());
-    marker.pose.position.x = 0;
-    marker.pose.position.y = 0;
-    marker.pose.position.z = 0;
-    marker.pose.orientation.x = bt_orientation.x();
-    marker.pose.orientation.y = bt_orientation.y();
-    marker.pose.orientation.z = bt_orientation.z();
-    marker.pose.orientation.w = bt_orientation.w();
-    /*Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+    gravity_marker.ns = "basic_shapes";
+    gravity_marker.id = 1;
+    gravity_marker.type = shape;
+    gravity_marker.action = visualization_msgs::Marker::ADD;
+    gravity_marker.pose.position.x = 0;
+    gravity_marker.pose.position.y = 0;
+    gravity_marker.pose.position.z = 0;
+    Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
     geometry_msgs::Point pt;
     pt.x = centroid(0);
     pt.y = centroid(1);
     pt.z = centroid(2);
-    marker.points.push_back(pt);
+    gravity_marker.points.push_back(pt);
     pt.x = centroid(0) + gravity(0);
     pt.y = centroid(1) + gravity(1);
     pt.z = centroid(2) + gravity(2);
-    marker.points.push_back(pt);*/
+    gravity_marker.points.push_back(pt);
 
-    marker.scale.x = 1.0;
-    marker.scale.y = 0.05;
-    marker.scale.z = 0.05;
+    gravity_marker.scale.x = 0.05;
+    gravity_marker.scale.y = 0.1;
+    gravity_marker.scale.z = 0.05;
 
-    marker.color.r = 1.0f;
-    marker.color.g = 0.0f;
-    marker.color.b = 0.0f;
-    marker.color.a = 0.5;
+    gravity_marker.color.r = 1.0f;
+    gravity_marker.color.g = 0.0f;
+    gravity_marker.color.b = 0.0f;
+    gravity_marker.color.a = 0.5;
 
-    marker.lifetime = ros::Duration();
-    marker.header.frame_id = tf_frame;
-    marker.header.stamp = ros::Time::now();
+    gravity_marker.lifetime = ros::Duration();
+    gravity_marker.header.frame_id = tf_frame;
+    gravity_marker.header.stamp = ros::Time::now();
 
-    marker_pub.publish(marker);
+    gravity_marker_pub.publish(gravity_marker);
   }
 
 private:
+  double PI = 3.14159265;
   ros::NodeHandle nh_;
   ros::NodeHandle private_nh;
   std::string tf_frame = "pico_zense_depth_frame";
@@ -554,7 +601,8 @@ private:
   ros::Subscriber sub_;
   ros::Subscriber sub_imu;
   sensor_msgs::Imu::Ptr imu;
-  ros::Publisher marker_pub;
+  ros::Publisher gravity_marker_pub;
+  ros::Publisher normal_marker_pub;
   pcl_ros::Publisher<sensor_msgs::PointCloud2> pub_;
   double la_x, la_y, la_z;
   double angle_x0 = 90, angle_y0 = 90, angle_z0 = 0;
@@ -562,6 +610,7 @@ private:
   double angle_xrot, angle_yrot, angle_zrot;
   dynamic_reconfigure::Server<shape_finder::shape_finder_nodeConfig> config_server_;
   Eigen::Vector3f gravity;
+  double hv_tolerance = 15;
 };
 
 int main(int argc, char **argv)
