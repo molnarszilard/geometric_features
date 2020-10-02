@@ -27,7 +27,6 @@
 #include <pcl/conversions.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/surface/gp3.h>
-#include <tf/transform_broadcaster.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <pcl/io/vtk_io.h>
 #include <pcl/PolygonMesh.h>
@@ -45,17 +44,6 @@
 #include "sensor_msgs/Imu.h"
 #include <math.h>
 #include <visualization_msgs/Marker.h>
-#include <tf/transform_listener.h>
-#include <boost/thread/mutex.hpp>
-#include <OGRE/OgreSceneNode.h>
-#include <OGRE/OgreSceneManager.h>
-#include <OGRE/OgreVector3.h>
-#include <rviz/visualization_manager.h>
-//#include <rviz/properties/color_property.h>
-#include <rviz/properties/float_property.h>
-#include <rviz/properties/int_property.h>
-//#include <rviz/frame_manager.h>
-#include <rviz/ogre_helpers/arrow.h>
 
 using namespace std::chrono_literals;
 class ShapeFinderNode
@@ -70,17 +58,14 @@ public:
   {
 
     std::string cloud_topic = "objects";
+    g_init = false;
     pub_.advertise(nh_, cloud_topic.c_str(), 1);
     gravity_marker_pub = nh_.advertise<visualization_msgs::Marker>("imu_out", 1);
     normal_marker_pub = nh_.advertise<visualization_msgs::Marker>("normal_out", 1);
-    //odom_trans.child_frame_id = "base_link";
     sub_ = nh_.subscribe("point_cloud_in", 1, &ShapeFinderNode::cloudCallback, this);
     config_server_.setCallback(boost::bind(&ShapeFinderNode::dynReconfCallback, this, _1, _2));
     sub_imu = nh_.subscribe("imu_data", 1, &ShapeFinderNode::imuCallback, this);
     ros::NodeHandle private_nh("~");
-
-    //tf_frame="/base_link";
-    //private_nh="~";
     private_nh.param("frame_id", tf_frame, std::string("pico_zense_depth_frame"));
   }
   ~ShapeFinderNode() {}
@@ -133,7 +118,7 @@ public:
     pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr
         model(new pcl::SampleConsensusModelPlane<pcl::PointXYZ>(cloud));
     pcl::RandomSampleConsensus<pcl::PointXYZ> ransac(model);
-    ransac.setDistanceThreshold(.01);
+    ransac.setDistanceThreshold(0.01);
     ransac.computeModel();
     ransac.getInliers(inliers);
     pcl::copyPointCloud(*cloud, inliers, *final);
@@ -161,10 +146,10 @@ public:
     ne.compute(*cloud_normals);
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_NORMAL_PLANE);
-    seg.setNormalDistanceWeight(0.1);
+    seg.setNormalDistanceWeight(NormalDistanceWeightP);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setMaxIterations(100);
-    seg.setDistanceThreshold(0.03);
+    seg.setMaxIterations(MaxIterationsP);
+    seg.setDistanceThreshold(DistanceThresholdP);
     seg.setInputCloud(cloud);
     seg.setInputNormals(cloud_normals);
     // Obtain the plane inliers and coefficients
@@ -184,10 +169,10 @@ public:
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_CYLINDER);
     seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setNormalDistanceWeight(0.1);
-    seg.setMaxIterations(10000);
-    seg.setDistanceThreshold(0.05);
-    seg.setRadiusLimits(0, 0.5);
+    seg.setNormalDistanceWeight(NormalDistanceWeightC);
+    seg.setMaxIterations(MaxIterationsC);
+    seg.setDistanceThreshold(DistanceThresholdC);
+    seg.setRadiusLimits(RadiusLimitsMinC, RadiusLimitsMaxC);
     seg.setInputCloud(cloud_filtered2);
     seg.setInputNormals(cloud_normals2);
     seg.segment(*inliers_cylinder, *coefficients_cylinder);
@@ -251,24 +236,17 @@ public:
         Eigen::Vector4f xyz_centroid;
         compute3DCentroid(*cloud_p, xyz_centroid);
         computeCovarianceMatrix(*cloud_p, xyz_centroid, covariance_matrix);
-        // Create the normal estimation class, and pass the input dataset to it
         pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
         ne.setInputCloud(cloud_p);
-        // Create an empty kdtree representation, and pass it to the normal estimation object.
-        // Its content will be filled inside the object, based on the given input dataset (as no other search surface is given).
         pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
         ne.setSearchMethod(tree);
-        // Output datasets
         pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-        // Use all neighbors in a sphere of radius 3cm
         ne.setRadiusSearch(0.03);
-        // Compute the features
         ne.compute(*cloud_normals);
         int pnr = cloud_normals->size() / 2;
         Eigen::Vector3f normalvector(cloud_normals->points[pnr].normal_x, cloud_normals->points[pnr].normal_y, cloud_normals->points[pnr].normal_z);
         normalvector.normalize();
         Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
-
         /*visualization_msgs::Marker normal_marker;
         uint32_t shape = visualization_msgs::Marker::ARROW;
         normal_marker.ns = "basic_shapes";
@@ -302,13 +280,11 @@ public:
         normal_marker.header.stamp = ros::Time::now();
 
         normal_marker_pub.publish(normal_marker);*/
-
         float angle = acos(gravity.dot(normalvector));
-        std::cout << "gravity: " << gravity[0] << ", " << gravity[1] << ", " << gravity[2] << std::endl;
+        /*std::cout << "gravity: " << gravity[0] << ", " << gravity[1] << ", " << gravity[2] << std::endl;
         std::cout << "normal: " << normalvector[0] << ", " << normalvector[1] << ", " << normalvector[2] << std::endl;
         std::cout << "angle: " << angle << std::endl;
-        std::cout << "cosangle: " << gravity.dot(normalvector) << std::endl;
-
+        std::cout << "cosangle: " << gravity.dot(normalvector) << std::endl;*/
         if (angle > PI - hv_tolerance)
           horizontal_floor = 1;
         if (angle < hv_tolerance)
@@ -318,7 +294,7 @@ public:
       }
     }
 
-    if ((overlap_c > overlap_s) && (overlap_c > overlap_p) && (overlap_c > th) && (size_cloud_c > min_cloud_size))
+    if ((overlap_c > overlap_s) && (overlap_c > overlap_p) && (overlap_c > th) && (size_cloud_c > min_cloud_size ))
     {
       cluster_shape = 3;
       pcl::copyPointCloud(*cloud_c, *cloud_colored_cluster);
@@ -531,6 +507,15 @@ public:
     big_plane_size = config.big_plane_size;
     min_cloud_size = config.min_cloud_size;
     hv_tolerance = config.hv_tolerance * PI / 180;
+    lean_tolerance = config.lean_tolerance * PI / 180;
+    NormalDistanceWeightP = config.NormalDistanceWeightPlane;    //0.1
+    MaxIterationsP = config.MaxIterationsPlane;                  //100
+    DistanceThresholdP = config.DistanceThresholdPlane;          //0.03
+    NormalDistanceWeightC = config.NormalDistanceWeightCyilnder; //0.1
+    MaxIterationsC = config.MaxIterationsCylinder;               //10000
+    DistanceThresholdC = config.DistanceThresholdCylinder;       // 0.1
+    RadiusLimitsMinC = config.RadiusLimitsMinCylinder;           //0.0
+    RadiusLimitsMaxC = config.RadiusLimitsMaxCylinder;           //0.5
   }
 
   void
@@ -541,18 +526,44 @@ public:
 
   void imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   {
-    ROS_INFO("Imu Orientation x: [%f], y: [%f], z: [%f], w: [%f]", msg->orientation.x, msg->orientation.y, msg->orientation.z, msg->orientation.w);
-    la_x = msg->linear_acceleration.x;
-    la_y = msg->linear_acceleration.y;
-    la_z = msg->linear_acceleration.z;
-    gravity[0] = la_x;
-    gravity[1] = la_y;
-    gravity[2] = la_z;
+    if (!g_init)
+    {
+      gravity0[0] = msg->linear_acceleration.x;
+      gravity0[1] = msg->linear_acceleration.y;
+      gravity0[2] = msg->linear_acceleration.z;
+      gravity0.normalize();
+      g_init = true;
+    }
+    gravity[0] = msg->linear_acceleration.x - gravity0[0];
+    gravity[1] = msg->linear_acceleration.y - gravity0[1];
+    gravity[2] = msg->linear_acceleration.z - gravity0[2];
     gravity.normalize();
-
-    const geometry_msgs::Vector3 &a = msg->linear_acceleration;
-    Eigen::Vector3f acc(a.x, a.y, a.z);
-
+    std::cout << "GRAVITY0 X: " << gravity0[0] << ", Y: " << gravity0[1] << ", Z: " << gravity0[2] << std::endl;
+    std::cout << "GRAVITY X: " << gravity[0] << ", Y: " << gravity[1] << ", Z: " << gravity[2] << std::endl;
+    float g_angle = acos(gravity.dot(gravity0));
+    std::cout << "angle of camera: " << g_angle << std::endl;
+    if (g_angle > lean_tolerance)
+    {
+      if (gravity[1] < 0)
+        std::cout << "The robot is UPSIDE_DOWN!" << std::endl;
+      else
+      {
+        if (abs(gravity[0]) > abs(gravity[2]))
+        {
+          if (gravity[0] > 0)
+            std::cout << "The robot is LEANING RIGHT!" << std::endl;
+          else
+            std::cout << "The robot is LEANING LEFT!" << std::endl;
+        }
+        else
+        {
+          if (gravity[2] > 0)
+            std::cout << "The robot is LEANING FORWARD!" << std::endl;
+          else
+            std::cout << "The robot is LEANING BACKWARDS!" << std::endl;
+        }
+      }
+    }
     visualization_msgs::Marker gravity_marker;
     uint32_t shape = visualization_msgs::Marker::ARROW;
     gravity_marker.ns = "basic_shapes";
@@ -572,20 +583,16 @@ public:
     pt.y = centroid(1) + gravity(1);
     pt.z = centroid(2) + gravity(2);
     gravity_marker.points.push_back(pt);
-
     gravity_marker.scale.x = 0.05;
     gravity_marker.scale.y = 0.1;
     gravity_marker.scale.z = 0.05;
-
     gravity_marker.color.r = 1.0f;
     gravity_marker.color.g = 0.0f;
     gravity_marker.color.b = 0.0f;
     gravity_marker.color.a = 0.5;
-
     gravity_marker.lifetime = ros::Duration();
     gravity_marker.header.frame_id = tf_frame;
     gravity_marker.header.stamp = ros::Time::now();
-
     gravity_marker_pub.publish(gravity_marker);
   }
 
@@ -600,17 +607,21 @@ private:
   size_t min_cloud_size = 100;
   ros::Subscriber sub_;
   ros::Subscriber sub_imu;
-  sensor_msgs::Imu::Ptr imu;
   ros::Publisher gravity_marker_pub;
   ros::Publisher normal_marker_pub;
   pcl_ros::Publisher<sensor_msgs::PointCloud2> pub_;
-  double la_x, la_y, la_z;
-  double angle_x0 = 90, angle_y0 = 90, angle_z0 = 0;
-  double angle_x, angle_y, angle_z;
-  double angle_xrot, angle_yrot, angle_zrot;
   dynamic_reconfigure::Server<shape_finder::shape_finder_nodeConfig> config_server_;
-  Eigen::Vector3f gravity;
-  double hv_tolerance = 15;
+  Eigen::Vector3f gravity, gravity0;
+  double hv_tolerance = 5, lean_tolerance = 15;
+  bool g_init;
+  double NormalDistanceWeightP;
+  int MaxIterationsP;
+  double DistanceThresholdP;
+  double NormalDistanceWeightC;
+  int MaxIterationsC;
+  double DistanceThresholdC;
+  double RadiusLimitsMinC;
+  double RadiusLimitsMaxC;
 };
 
 int main(int argc, char **argv)
