@@ -406,7 +406,7 @@ public:
     sor.setInputCloud(cloud_filtered_voxel);
     sor.setMeanK(MeanK);
     sor.setStddevMulThresh(StddevMulThresh);
-    sor.setNegative (false);
+    sor.setNegative(false);
     sor.filter(*cloud_filtered);
     // Create the segmentation object for the planar model and set all the parameters
     pcl::SACSegmentation<pcl::PointXYZ> seg;
@@ -508,6 +508,33 @@ public:
   }
 
   void
+  gravityDamper(const sensor_msgs::Imu::ConstPtr &msg)
+  {
+    gravity[0] = msg->linear_acceleration.x;
+    gravity[1] = msg->linear_acceleration.y;
+    gravity[2] = msg->linear_acceleration.z;
+    for (int i = 0; i < gravity_damp - 1; i++)
+    {
+      gravity[0] += gravity_p[i][0];
+      gravity[1] += gravity_p[i][1];
+      gravity[2] += gravity_p[i][2];
+      if (i > 0)
+      {
+        gravity_p[i][0] = gravity_p[i - 1][0];
+        gravity_p[i][1] = gravity_p[i - 1][1];
+        gravity_p[i][2] = gravity_p[i - 1][2];
+      }
+    }
+    gravity[0] /= gravity_damp;
+    gravity[1] /= gravity_damp;
+    gravity[2] /= gravity_damp;
+    gravity.normalize();
+    gravity_p[0][0] = msg->linear_acceleration.x;
+    gravity_p[0][1] = msg->linear_acceleration.y;
+    gravity_p[0][2] = msg->linear_acceleration.z;
+  }
+
+  void
   imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   {
     if (!g_init)
@@ -516,37 +543,16 @@ public:
       gravity0[1] = msg->linear_acceleration.y;
       gravity0[2] = msg->linear_acceleration.z;
       gravity0.normalize();
-      gravity_p1[0] = msg->linear_acceleration.x;
-      gravity_p1[1] = msg->linear_acceleration.y;
-      gravity_p1[2] = msg->linear_acceleration.z;
-      gravity_p2[0] = msg->linear_acceleration.x;
-      gravity_p2[1] = msg->linear_acceleration.y;
-      gravity_p2[2] = msg->linear_acceleration.z;
-      gravity_p3[0] = msg->linear_acceleration.x;
-      gravity_p3[1] = msg->linear_acceleration.y;
-      gravity_p3[2] = msg->linear_acceleration.z;
-      gravity_p4[0] = msg->linear_acceleration.x;
-      gravity_p4[1] = msg->linear_acceleration.y;
-      gravity_p4[2] = msg->linear_acceleration.z;
+      for (int i = 0; i < gravity_damp; i++)
+      {
+        gravity_p[i][0] = msg->linear_acceleration.x;
+        gravity_p[i][1] = msg->linear_acceleration.y;
+        gravity_p[i][2] = msg->linear_acceleration.z;
+      }
+
       g_init = true;
     }
-    gravity[0] = (msg->linear_acceleration.x + gravity_p1[0] + gravity_p2[0] + gravity_p3[0] + gravity_p4[0]) / 5;
-    gravity[1] = (msg->linear_acceleration.y + gravity_p1[1] + gravity_p2[1] + gravity_p3[1] + gravity_p4[1]) / 5;
-    gravity[2] = (msg->linear_acceleration.z + gravity_p1[2] + gravity_p2[2] + gravity_p3[2] + gravity_p4[2]) / 5;
-    gravity.normalize();
-
-    gravity_p4[0] = gravity_p3[0];
-    gravity_p4[1] = gravity_p3[1];
-    gravity_p4[2] = gravity_p3[2];
-    gravity_p3[0] = gravity_p2[0];
-    gravity_p3[1] = gravity_p2[1];
-    gravity_p3[2] = gravity_p2[2];
-    gravity_p2[0] = gravity_p1[0];
-    gravity_p2[1] = gravity_p1[1];
-    gravity_p2[2] = gravity_p1[2];
-    gravity_p1[0] = msg->linear_acceleration.x;
-    gravity_p1[1] = msg->linear_acceleration.y;
-    gravity_p1[2] = msg->linear_acceleration.z;
+    gravityDamper(msg);
     std::cout << "GRAVITY0 X: " << gravity0[0] << ", Y: " << gravity0[1] << ", Z: " << gravity0[2] << std::endl;
     std::cout << "GRAVITY X: " << gravity[0] << ", Y: " << gravity[1] << ", Z: " << gravity[2] << std::endl;
     float g_angle = acos(gravity.dot(gravity0));
@@ -617,8 +623,10 @@ private:
   ros::Publisher normal_marker_pub;
   pcl_ros::Publisher<sensor_msgs::PointCloud2> pub_;
   dynamic_reconfigure::Server<shape_finder::shape_finder_nodeConfig> config_server_;
-  Eigen::Vector3f gravity, gravity0, gravity_p1, gravity_p2, gravity_p3, gravity_p4;
-  double hv_tolerance = 5, lean_tolerance = 15;
+  Eigen::Vector3f gravity, gravity0;
+  int gravity_damp=5;
+  double gravity_p[100][3];
+  double hv_tolerance, lean_tolerance;
   bool g_init;
   double NormalDistanceWeightP;
   int MaxIterationsP;
