@@ -57,7 +57,7 @@ public:
   ShapeFinderNode()
       : private_nh("~")
   {
-
+    gravity_filtered = false;
     std::string cloud_topic = "objects";
     g_init = false;
     pub_.advertise(nh_, cloud_topic.c_str(), 1);
@@ -552,7 +552,14 @@ public:
 
       g_init = true;
     }
-    gravityDamper(msg);
+    if (!gravity_filtered)
+      gravityDamper(msg);
+    else
+    {
+      gravity[0] = msg->linear_acceleration.x;
+      gravity[1] = msg->linear_acceleration.y;
+      gravity[2] = msg->linear_acceleration.z;
+    }
     std::cout << "GRAVITY0 X: " << gravity0[0] << ", Y: " << gravity0[1] << ", Z: " << gravity0[2] << std::endl;
     std::cout << "GRAVITY X: " << gravity[0] << ", Y: " << gravity[1] << ", Z: " << gravity[2] << std::endl;
     float g_angle = acos(gravity.dot(gravity0));
@@ -624,7 +631,8 @@ private:
   pcl_ros::Publisher<sensor_msgs::PointCloud2> pub_;
   dynamic_reconfigure::Server<shape_finder::shape_finder_nodeConfig> config_server_;
   Eigen::Vector3f gravity, gravity0;
-  int gravity_damp=5;
+  int gravity_damp = 5;
+  bool gravity_filtered;
   double gravity_p[100][3];
   double hv_tolerance, lean_tolerance;
   bool g_init;
