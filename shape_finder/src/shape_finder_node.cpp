@@ -44,6 +44,7 @@
 #include "sensor_msgs/Imu.h"
 #include <math.h>
 #include <visualization_msgs/Marker.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 
 using namespace std::chrono_literals;
 class ShapeFinderNode
@@ -70,30 +71,6 @@ public:
   }
   ~ShapeFinderNode() {}
 
-  /*std::vector<int> inliers;
-  simpleVis(pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr cloud, char *title)
-  {
-    // --------------------------------------------
-    // -----Open 3D viewer and add point cloud-----
-    // --------------------------------------------
-    pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer(title));
-    viewer->setBackgroundColor(0, 0, 0);
-    viewer->addPointCloud<pcl::PointXYZRGB>(cloud, "sample cloud");
-    //size_t size = cloud->size();
-    pcl::CentroidPoint<pcl::PointXYZRGB> centroid;
-    for (int i = 0; i < cloud->points.size(); i++)
-    {
-      centroid.add(pcl::PointXYZRGB(cloud->points[i].x, cloud->points[i].y, cloud->points[i].z));
-    }
-    pcl::PointXYZRGB c1;
-    centroid.get(c1);
-    viewer->addText3D(title, c1, 0.05, 1.0, 0.5, 0.5, title, 0);
-    viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "sample cloud");
-    //viewer->addCoordinateSystem (1.0, "global");
-    viewer->initCameraParameters();
-    return (viewer);
-  }*/
-
   pcl::PointCloud<pcl::PointXYZ>::Ptr
   ret_sphere(pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud)
   {
@@ -111,21 +88,6 @@ public:
   }
 
   pcl::PointCloud<pcl::PointXYZ>::Ptr
-  ret_plane(pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud)
-  {
-    pcl::PointCloud<pcl::PointXYZ>::Ptr final(new pcl::PointCloud<pcl::PointXYZ>);
-    std::vector<int> inliers;
-    pcl::SampleConsensusModelPlane<pcl::PointXYZ>::Ptr
-        model(new pcl::SampleConsensusModelPlane<pcl::PointXYZ>(cloud));
-    pcl::RandomSampleConsensus<pcl::PointXYZ> ransac(model);
-    ransac.setDistanceThreshold(0.01);
-    ransac.computeModel();
-    ransac.getInliers(inliers);
-    pcl::copyPointCloud(*cloud, inliers, *final);
-    return final;
-  }
-
-  pcl::PointCloud<pcl::PointXYZ>::Ptr
   ret_cylinder(pcl::PointCloud<pcl::PointXYZ>::ConstPtr cloud)
   {
     pcl::PassThrough<PointT> pass;
@@ -134,7 +96,6 @@ public:
     pcl::ExtractIndices<PointT> extract;
     pcl::ExtractIndices<pcl::Normal> extract_normals;
     pcl::search::KdTree<PointT>::Ptr tree(new pcl::search::KdTree<PointT>());
-    // Datasets
     pcl::PointCloud<PointT>::Ptr cloud_filtered2(new pcl::PointCloud<PointT>);
     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
     pcl::PointCloud<pcl::Normal>::Ptr cloud_normals2(new pcl::PointCloud<pcl::Normal>);
@@ -154,7 +115,6 @@ public:
     seg.setInputNormals(cloud_normals);
     // Obtain the plane inliers and coefficients
     seg.segment(*inliers_plane, *coefficients_plane);
-    //std::cerr << "Plane coefficients: " << *coefficients_plane << std::endl;
     extract.setInputCloud(cloud);
     extract.setIndices(inliers_plane);
     extract.setNegative(false);
@@ -176,8 +136,7 @@ public:
     seg.setInputCloud(cloud_filtered2);
     seg.setInputNormals(cloud_normals2);
     seg.segment(*inliers_cylinder, *coefficients_cylinder);
-    //std::cerr << "Cylinder coefficients: " << *coefficients_cylinder << std::endl;
-    extract.setInputCloud(cloud_filtered2);
+    extract.setInputCloud(cloud);
     extract.setIndices(inliers_cylinder);
     extract.setNegative(false);
     pcl::PointCloud<PointT>::Ptr cloud_cylinder(new pcl::PointCloud<PointT>());
@@ -185,38 +144,49 @@ public:
     return cloud_cylinder;
   }
 
-  pcl::PointCloud<pcl::PointXYZRGB> shapefind(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster, int j)
+  pcl::PointCloud<pcl::PointXYZRGB>
+  shapefind(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster, int j)
   {
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_s(new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_p(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_c(new pcl::PointCloud<pcl::PointXYZ>);
     size_t size_cloud = cloud_cluster->size();
     int big_plane = 0;
     int horizontal_floor = 0;
     int horizontal_ceiling = 0;
     int vertical = 0;
+    int cluster_shape = 0; //0-nothing(sub threshold-th), 1-plane, 2-sphere, 3-cylinder
+    printf("cluster %d, size: %zu\n", j, size_cloud);
+    pcl::SACSegmentation<pcl::PointXYZ> seg;
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_p(new pcl::PointCloud<pcl::PointXYZ>());
+    seg.setOptimizeCoefficients(true);
+    seg.setModelType(pcl::SACMODEL_PLANE);
+    seg.setMethodType(pcl::SAC_RANSAC);
+    seg.setMaxIterations(50);
+    seg.setDistanceThreshold(DistanceThresholdP0);
+    seg.setInputCloud(cloud_cluster);
+    seg.segment(*inliers, *coefficients);
+    pcl::ExtractIndices<pcl::PointXYZ> extract;
+    extract.setInputCloud(cloud_cluster);
+    extract.setIndices(inliers);
+    extract.setNegative(false);
+    extract.filter(*cloud_p);
 
-    printf("cluster %d, size: %d\n", j, size_cloud);
     cloud_s = ret_sphere(cloud_cluster);
-    cloud_p = ret_plane(cloud_cluster);
     cloud_c = ret_cylinder(cloud_cluster);
-
     size_t size_cloud_s = cloud_s->size();
     printf("Size sphere point cloud: %zu\n", size_cloud_s);
     float overlap_s = (float)size_cloud_s / (float)size_cloud;
     printf("sphere overlap: %f\n", overlap_s);
-
     size_t size_cloud_p = cloud_p->size();
     printf("Size plane point cloud: %zu\n", size_cloud_p);
     float overlap_p = (float)size_cloud_p / (float)size_cloud;
     printf("plane overlap: %f\n", overlap_p);
-
     size_t size_cloud_c = cloud_c->size();
     printf("Size cylinder point cloud: %zu\n", size_cloud_c);
     float overlap_c = (float)size_cloud_c / (float)size_cloud;
     printf("cylinder overlap: %f\n", overlap_c);
-
-    int cluster_shape = 0; //0-nothing(sub threshold-th), 1-plane, 2-sphere, 3-cylinder
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_colored_cluster(new pcl::PointCloud<pcl::PointXYZRGB>);
 
     if ((overlap_s > overlap_p) && (overlap_s > overlap_c) && (overlap_s > th) && (size_cloud_s > min_cloud_size))
@@ -225,82 +195,41 @@ public:
       pcl::copyPointCloud(*cloud_s, *cloud_colored_cluster);
     }
 
-    if ((overlap_p > overlap_s) && (overlap_p > overlap_c) && (overlap_p > th) && (size_cloud_p > min_cloud_size))
+    if ((overlap_p > overlap_s) && (overlap_p > overlap_c * 3 / 2) && (overlap_p > th) && (size_cloud_p > min_cloud_size))
     {
       cluster_shape = 1;
       pcl::copyPointCloud(*cloud_p, *cloud_colored_cluster);
-      if (cloud_colored_cluster->size() > big_plane_size)
+      /*Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+      for (unsigned int i = 0; i < cloud_colored_cluster->size(); i++)
       {
-        big_plane = 1;
-        Eigen::Matrix3f covariance_matrix;
-        Eigen::Vector4f xyz_centroid;
-        compute3DCentroid(*cloud_p, xyz_centroid);
-        computeCovarianceMatrix(*cloud_p, xyz_centroid, covariance_matrix);
-        pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
-        ne.setInputCloud(cloud_p);
-        pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
-        ne.setSearchMethod(tree);
-        pcl::PointCloud<pcl::Normal>::Ptr cloud_normals(new pcl::PointCloud<pcl::Normal>);
-        ne.setRadiusSearch(0.03);
-        ne.compute(*cloud_normals);
-        int pnr = cloud_normals->size() / 2;
-        Eigen::Vector3f normalvector(cloud_normals->points[pnr].normal_x, cloud_normals->points[pnr].normal_y, cloud_normals->points[pnr].normal_z);
-        normalvector.normalize();
-        Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
-        /*visualization_msgs::Marker normal_marker;
-        uint32_t shape = visualization_msgs::Marker::ARROW;
-        normal_marker.ns = "basic_shapes";
-        normal_marker.id = 1;
-        normal_marker.type = shape;
-        normal_marker.action = visualization_msgs::Marker::ADD;
-        normal_marker.pose.position.x = 0;
-        normal_marker.pose.position.y = 0;
-        normal_marker.pose.position.z = 0;
-        geometry_msgs::Point pt;
-        pt.x = centroid(0);
-        pt.y = centroid(1);
-        pt.z = centroid(2);
-        normal_marker.points.push_back(pt);
-        pt.x = centroid(0) + normalvector(0);
-        pt.y = centroid(1) + normalvector(1);
-        pt.z = centroid(2) + normalvector(2);
-        normal_marker.points.push_back(pt);
-
-        normal_marker.scale.x = 0.05;
-        normal_marker.scale.y = 0.1;
-        normal_marker.scale.z = 0.05;
-
-        normal_marker.color.r = 0.0f;
-        normal_marker.color.g = 0.0f;
-        normal_marker.color.b = 1.0f;
-        normal_marker.color.a = 0.5;
-
-        normal_marker.lifetime = ros::Duration();
-        normal_marker.header.frame_id = tf_frame;
-        normal_marker.header.stamp = ros::Time::now();
-
-        normal_marker_pub.publish(normal_marker);*/
-        float angle = acos(gravity.dot(normalvector));
-        /*std::cout << "gravity: " << gravity[0] << ", " << gravity[1] << ", " << gravity[2] << std::endl;
-        std::cout << "normal: " << normalvector[0] << ", " << normalvector[1] << ", " << normalvector[2] << std::endl;
-        std::cout << "angle: " << angle << std::endl;
-        std::cout << "cosangle: " << gravity.dot(normalvector) << std::endl;*/
-        if (angle > PI - hv_tolerance)
-          horizontal_floor = 1;
-        if (angle < hv_tolerance)
-          horizontal_ceiling = 1;
-        if (angle > PI / 2 - hv_tolerance && angle < PI / 2 + hv_tolerance)
-          vertical = 1;
+        centroid += cloud_colored_cluster->points[i].getVector3fMap();
       }
+      centroid /= cloud_colored_cluster->size();*/
+      Eigen::Vector3f normal;
+      normal << coefficients->values[0], coefficients->values[1], coefficients->values[2];
+      if (coefficients->values[3] < 0)
+      {
+        normal *= -1;
+      }
+      float angle = acos(gravity.dot(normal));
+      if (cloud_p->size() > big_plane_size)
+        big_plane = 1;
+      if (angle > PI - hv_tolerance)
+        horizontal_floor = 1;
+      if (angle < hv_tolerance)
+        horizontal_ceiling = 1;
+      if (angle > PI / 2 - hv_tolerance && angle < PI / 2 + hv_tolerance)
+        vertical = 1;
     }
 
-    if ((overlap_c > overlap_s) && (overlap_c > overlap_p) && (overlap_c > th) && (size_cloud_c > min_cloud_size ))
+    if ((overlap_c > overlap_s) && (overlap_c > overlap_p) && (overlap_c > th) && (size_cloud_c > min_cloud_size * 2 / 3))
     {
       cluster_shape = 3;
       pcl::copyPointCloud(*cloud_c, *cloud_colored_cluster);
     }
 
     std::uint8_t r = 0, g = 0, b = 0;
+
     switch (cluster_shape)
     {
     case 0:
@@ -341,6 +270,12 @@ public:
         r = 0;
         g = 255;
         b = 0; // light green
+        if (horizontal_floor)
+        {
+          r = 178;
+          g = 102;
+          b = 255; // purple
+        }
       }
       break;
     }
@@ -361,56 +296,130 @@ public:
     }
 
     std::uint32_t rgb = ((std::uint32_t)r << 16 | (std::uint32_t)g << 8 | (std::uint32_t)b);
-    //cloud_colored_cluster->points.rgb = *reinterpret_cast<float *>(&rgb);
     printf("cluster+shape=%d\nrgb:%d,%d,%d\n", cluster_shape, r, g, b);
     for (int i = 0; i < cloud_colored_cluster->size(); i++)
     {
       cloud_colored_cluster->points[i].rgb = *reinterpret_cast<float *>(&rgb);
     }
 
-    printf("SIZE of cluster_colored_cluster:%d\n\n", cloud_colored_cluster->size());
     return *cloud_colored_cluster;
   }
 
-  void clusterfind(const PointCloud::ConstPtr &cloud_in)
+  pcl::PointCloud<pcl::PointXYZRGB>
+  planefind(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster, int j, pcl::ModelCoefficients::Ptr coefficients)
+  {
+    size_t size_cloud = cloud_cluster->size();
+    int big_plane = 0;
+    int horizontal_floor = 0;
+    int horizontal_ceiling = 0;
+    int vertical = 0;
+    printf("cluster %d, size: %zu\n", j, size_cloud);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_colored_cluster(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::copyPointCloud(*cloud_cluster, *cloud_colored_cluster);
+    /*Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+    for (unsigned int i = 0; i < cloud_colored_cluster->size(); i++)
+    {
+      centroid += cloud_colored_cluster->points[i].getVector3fMap();
+    }
+    centroid /= cloud_colored_cluster->size();*/
+    Eigen::Vector3f normal;
+    normal << coefficients->values[0], coefficients->values[1], coefficients->values[2];
+    if (coefficients->values[3] < 0)
+    {
+      normal *= -1;
+    }
+    float angle = acos(gravity.dot(normal));
+    if (cloud_colored_cluster->size() > big_plane_size)
+      big_plane = 1;
+    if (angle > PI - hv_tolerance)
+      horizontal_floor = 1;
+    if (angle < hv_tolerance)
+      horizontal_ceiling = 1;
+    if (angle > PI / 2 - hv_tolerance && angle < PI / 2 + hv_tolerance)
+      vertical = 1;
+    std::uint8_t r = 0, g = 0, b = 0;
+    if (big_plane)
+    {
+      r = 0;
+      g = 125;
+      b = 0; // dark green
+      if (vertical)
+      {
+        r = 255;
+        g = 255;
+        b = 0; //yellow
+      }
+      if (horizontal_floor)
+      {
+        r = 178;
+        g = 102;
+        b = 255; // purple
+      }
+      if (horizontal_ceiling)
+      {
+        r = 255;
+        g = 0;
+        b = 153; //magenta
+      }
+    }
+    else
+    {
+      r = 0;
+      g = 255;
+      b = 0; // light green
+      if (horizontal_floor)
+      {
+        r = 178;
+        g = 102;
+        b = 255; // purple
+      }
+    }
+    std::uint32_t rgb = ((std::uint32_t)r << 16 | (std::uint32_t)g << 8 | (std::uint32_t)b);
+    for (int i = 0; i < cloud_colored_cluster->size(); i++)
+    {
+      cloud_colored_cluster->points[i].rgb = *reinterpret_cast<float *>(&rgb);
+    }
+    return *cloud_colored_cluster;
+  }
+
+  void
+  clusterfind(const PointCloud::ConstPtr &cloud_in)
   {
     // Read in the cloud data
     pcl::PCDReader reader;
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_colored_pcl(new pcl::PointCloud<pcl::PointXYZRGB>);
     sensor_msgs::PointCloud2 cloud_colored_sensor;
-
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_f(new pcl::PointCloud<pcl::PointXYZ>);
-    //reader.read("/home/szilard/catkin_ws/src/shape_finder/src/table_scene_lms400.pcd", *cloud);
-    //pcl::fromROSMsg(*cloud_in, cloud);
-    //pcl_ros::transformPointCloud(*cloud_in, *cloud, const tf::Transform &transform);
     pcl::copyPointCloud(*cloud_in, *cloud);
-
+    std::cout << std::endl;
     std::cout << "PointCloud before filtering has: " << cloud->size() << " data points." << std::endl; //*
-
     // Create the filtering object: downsample the dataset using a leaf size of 1cm
     pcl::VoxelGrid<pcl::PointXYZ> vg;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered_voxel(new pcl::PointCloud<pcl::PointXYZ>);
     vg.setInputCloud(cloud);
-
     vg.setLeafSize(leaf_size, leaf_size, leaf_size);
-    vg.filter(*cloud_filtered);
-    std::cout << "PointCloud after filtering has: " << cloud_filtered->size() << " data points." << std::endl; //*
-
+    vg.filter(*cloud_filtered_voxel);
+    std::cout << "PointCloud after filtering has: " << cloud_filtered_voxel->size() << " data points." << std::endl; //*
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>);
+    pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+    sor.setInputCloud(cloud_filtered_voxel);
+    sor.setMeanK(MeanK);
+    sor.setStddevMulThresh(StddevMulThresh);
+    sor.setNegative (false);
+    sor.filter(*cloud_filtered);
     // Create the segmentation object for the planar model and set all the parameters
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_plane(new pcl::PointCloud<pcl::PointXYZ>());
-    pcl::PCDWriter writer;
     seg.setOptimizeCoefficients(true);
     seg.setModelType(pcl::SACMODEL_PLANE);
     seg.setMethodType(pcl::SAC_RANSAC);
     seg.setMaxIterations(100);
     seg.setDistanceThreshold(0.02);
+    int i = 0, nr_points = (int)cloud_filtered->size(), j = 0;
 
-    int j = 0;
-    int i = 0, nr_points = (int)cloud_filtered->size();
     while (cloud_filtered->size() > 0.3 * nr_points)
     {
       // Segment the largest planar component from the remaining cloud
@@ -421,34 +430,24 @@ public:
         std::cout << "Could not estimate a planar model for the given dataset." << std::endl;
         break;
       }
-
       // Extract the planar inliers from the input cloud
       pcl::ExtractIndices<pcl::PointXYZ> extract;
       extract.setInputCloud(cloud_filtered);
       extract.setIndices(inliers);
       extract.setNegative(false);
-
       // Get the points associated with the planar surface
       extract.filter(*cloud_plane);
       std::cout << "PointCloud representing the planar component: " << cloud_plane->size() << " data points." << std::endl;
-
+      *cloud_colored_pcl = *cloud_colored_pcl + planefind(cloud_plane, j, coefficients);
       // Remove the planar inliers, extract the rest
       extract.setNegative(true);
       extract.filter(*cloud_f);
       *cloud_filtered = *cloud_f;
-
-      *cloud_colored_pcl = *cloud_colored_pcl + shapefind(cloud_plane, j);
-
-      /*std::stringstream ss;
-      ss << "/home/szilard/catkin_ws/src/shape_finder/src/cloud_cluster_" << j << ".pcd";
-      writer.write<pcl::PointXYZ>(ss.str(), *cloud_plane, false);*/
       j++;
     }
-
     // Creating the KdTree object for the search method of the extraction
     pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>);
     tree->setInputCloud(cloud_filtered);
-
     std::vector<pcl::PointIndices> cluster_indices;
     pcl::EuclideanClusterExtraction<pcl::PointXYZ> ec;
     ec.setClusterTolerance(0.02); // 2cm
@@ -460,40 +459,22 @@ public:
 
     for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin(); it != cluster_indices.end(); ++it)
     {
-
       pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_cluster(new pcl::PointCloud<pcl::PointXYZ>);
       for (std::vector<int>::const_iterator pit = it->indices.begin(); pit != it->indices.end(); ++pit)
         cloud_cluster->push_back((*cloud_filtered)[*pit]);
-
       cloud_cluster->width = cloud_cluster->size();
       cloud_cluster->height = 1;
       cloud_cluster->is_dense = true;
       size_t size_cloud = cloud_cluster->size();
-
       *cloud_colored_pcl = *cloud_colored_pcl + shapefind(cloud_cluster, j);
-
-      /*std::cout << "PointCloud representing the Cluster: " << cloud_cluster->size() << " data points." << std::endl;
-      std::stringstream ss;
-      ss << "/home/szilard/catkin_ws/src/shape_finder/src/cloud_cluster_" << j << ".pcd";
-      writer.write<pcl::PointXYZ>(ss.str(), *cloud_cluster, false); */
       j++;
     }
 
     pcl::toROSMsg(*cloud_colored_pcl, cloud_colored_sensor);
     cloud_colored_sensor.header.frame_id = "pico_zense_depth_frame";
-    //ros::Rate loop_rate(10);
-
     std::string fields_list = pcl::getFieldsList(cloud_colored_sensor);
     std::cout << "Colored PointCloud before filtering has: " << cloud_colored_sensor.width << " data points."
               << " points " << fields_list << "\" in frame \"" << cloud_colored_sensor.header.frame_id << std::endl;
-
-    /*while (ros::ok())
-    {
-      cloud_colored_sensor.header.stamp = ros::Time::now();
-      pub_.publish(cloud_colored_sensor);
-      ros::spinOnce();
-      loop_rate.sleep();
-    }*/
     cloud_colored_sensor.header.stamp = ros::Time::now();
     pub_.publish(cloud_colored_sensor);
   }
@@ -501,7 +482,6 @@ public:
   void
   dynReconfCallback(shape_finder::shape_finder_nodeConfig &config, uint32_t level)
   {
-    //pt_.setFilterLimits(config.lower_limit, config.upper_limit);
     leaf_size = config.leafsize;
     th = config.overlap_threshold;
     big_plane_size = config.big_plane_size;
@@ -510,12 +490,15 @@ public:
     lean_tolerance = config.lean_tolerance * PI / 180;
     NormalDistanceWeightP = config.NormalDistanceWeightPlane;    //0.1
     MaxIterationsP = config.MaxIterationsPlane;                  //100
-    DistanceThresholdP = config.DistanceThresholdPlane;          //0.03
+    DistanceThresholdP0 = config.DistanceThresholdPlane0;        //0.01
+    DistanceThresholdP = config.DistanceThresholdPlane;          //0.001
     NormalDistanceWeightC = config.NormalDistanceWeightCyilnder; //0.1
     MaxIterationsC = config.MaxIterationsCylinder;               //10000
     DistanceThresholdC = config.DistanceThresholdCylinder;       // 0.1
     RadiusLimitsMinC = config.RadiusLimitsMinCylinder;           //0.0
     RadiusLimitsMaxC = config.RadiusLimitsMaxCylinder;           //0.5
+    StddevMulThresh = config.StddevMulThresh;                    //1.0
+    MeanK = config.MeanK;                                        //50
   }
 
   void
@@ -524,7 +507,8 @@ public:
     clusterfind(cloud_in);
   }
 
-  void imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
+  void
+  imuCallback(const sensor_msgs::Imu::ConstPtr &msg)
   {
     if (!g_init)
     {
@@ -532,12 +516,37 @@ public:
       gravity0[1] = msg->linear_acceleration.y;
       gravity0[2] = msg->linear_acceleration.z;
       gravity0.normalize();
+      gravity_p1[0] = msg->linear_acceleration.x;
+      gravity_p1[1] = msg->linear_acceleration.y;
+      gravity_p1[2] = msg->linear_acceleration.z;
+      gravity_p2[0] = msg->linear_acceleration.x;
+      gravity_p2[1] = msg->linear_acceleration.y;
+      gravity_p2[2] = msg->linear_acceleration.z;
+      gravity_p3[0] = msg->linear_acceleration.x;
+      gravity_p3[1] = msg->linear_acceleration.y;
+      gravity_p3[2] = msg->linear_acceleration.z;
+      gravity_p4[0] = msg->linear_acceleration.x;
+      gravity_p4[1] = msg->linear_acceleration.y;
+      gravity_p4[2] = msg->linear_acceleration.z;
       g_init = true;
     }
-    gravity[0] = msg->linear_acceleration.x - gravity0[0];
-    gravity[1] = msg->linear_acceleration.y - gravity0[1];
-    gravity[2] = msg->linear_acceleration.z - gravity0[2];
+    gravity[0] = (msg->linear_acceleration.x + gravity_p1[0] + gravity_p2[0] + gravity_p3[0] + gravity_p4[0]) / 5;
+    gravity[1] = (msg->linear_acceleration.y + gravity_p1[1] + gravity_p2[1] + gravity_p3[1] + gravity_p4[1]) / 5;
+    gravity[2] = (msg->linear_acceleration.z + gravity_p1[2] + gravity_p2[2] + gravity_p3[2] + gravity_p4[2]) / 5;
     gravity.normalize();
+
+    gravity_p4[0] = gravity_p3[0];
+    gravity_p4[1] = gravity_p3[1];
+    gravity_p4[2] = gravity_p3[2];
+    gravity_p3[0] = gravity_p2[0];
+    gravity_p3[1] = gravity_p2[1];
+    gravity_p3[2] = gravity_p2[2];
+    gravity_p2[0] = gravity_p1[0];
+    gravity_p2[1] = gravity_p1[1];
+    gravity_p2[2] = gravity_p1[2];
+    gravity_p1[0] = msg->linear_acceleration.x;
+    gravity_p1[1] = msg->linear_acceleration.y;
+    gravity_p1[2] = msg->linear_acceleration.z;
     std::cout << "GRAVITY0 X: " << gravity0[0] << ", Y: " << gravity0[1] << ", Z: " << gravity0[2] << std::endl;
     std::cout << "GRAVITY X: " << gravity[0] << ", Y: " << gravity[1] << ", Z: " << gravity[2] << std::endl;
     float g_angle = acos(gravity.dot(gravity0));
@@ -570,9 +579,6 @@ public:
     gravity_marker.id = 1;
     gravity_marker.type = shape;
     gravity_marker.action = visualization_msgs::Marker::ADD;
-    gravity_marker.pose.position.x = 0;
-    gravity_marker.pose.position.y = 0;
-    gravity_marker.pose.position.z = 0;
     Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
     geometry_msgs::Point pt;
     pt.x = centroid(0);
@@ -611,26 +617,25 @@ private:
   ros::Publisher normal_marker_pub;
   pcl_ros::Publisher<sensor_msgs::PointCloud2> pub_;
   dynamic_reconfigure::Server<shape_finder::shape_finder_nodeConfig> config_server_;
-  Eigen::Vector3f gravity, gravity0;
+  Eigen::Vector3f gravity, gravity0, gravity_p1, gravity_p2, gravity_p3, gravity_p4;
   double hv_tolerance = 5, lean_tolerance = 15;
   bool g_init;
   double NormalDistanceWeightP;
   int MaxIterationsP;
   double DistanceThresholdP;
+  double DistanceThresholdP0;
   double NormalDistanceWeightC;
   int MaxIterationsC;
   double DistanceThresholdC;
   double RadiusLimitsMinC;
   double RadiusLimitsMaxC;
+  double StddevMulThresh;
+  int MeanK;
 };
 
 int main(int argc, char **argv)
 {
-
   ros::init(argc, argv, "shapefinder_node");
-
   ShapeFinderNode sf;
-  //sf.clusterfind();
   ros::spin();
-  //return (0);
 }
