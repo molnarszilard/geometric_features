@@ -1,0 +1,21 @@
+
+<launch>
+ <node pkg="shape_finder" type="shape_finder_nodelet" name="shape_finder_nodelet" output="screen" >
+<remap from="point_cloud_in" to="voxel_cloud"/>
+<remap from="gravity_in" to="/gravity_nodelet/gravity_point"/>
+</node>
+
+<node pkg="shape_finder" type="voxel_filter_nodelet" name="voxel_filter_nodelet" output="screen" >
+<remap from="point_cloud_in" to="/pico_zense/depth/points"/>
+</node>
+
+<node pkg="shape_finder" type="gravity_nodelet" name="gravity_nodelet" output="screen" >
+<remap from="imu_data" to="/pico_zense/imu"/>
+</node>
+
+ <node pkg="rviz" type="rviz" name="rviz" output="screen" args="-d $(find shape_finder)/cfg/rviz.rviz"/>
+
+ <node pkg="rqt_reconfigure" type="rqt_reconfigure" name="rqt_reconfigure" output="screen" />
+
+</launch>
+
