@@ -15,9 +15,10 @@ class Kalman(object):
 		self.P = np.matrix(np.identity(n_states)) 
 		self.F = np.matrix(np.identity(n_states))
 		self.u = np.matrix(np.zeros(shape=(n_states,1)))
-		self.H = np.matrix(np.zeros(shape=(n_sensors, n_states)))
+		self.H = np.matrix(np.identity(n_states)) #np.matrix(np.zeros(shape=(n_sensors, n_states)))
 		self.R = np.matrix(np.identity(n_sensors))
 		self.I = np.matrix(np.identity(n_states))
+		self.Q = np.matrix(np.identity(n_states)) * 0.1
 
 		self.first = True
 
@@ -32,7 +33,7 @@ class Kalman(object):
 
 	def predict(self):
 		self.x = self.F * self.x + self.u
-		self.P = self.F * self.P * self.F.getT()
+		self.P = self.F * self.P * self.F.getT() + self.Q
 
 class Subscriber(object):
 	"""docstring for Subscriber"""
@@ -72,5 +73,3 @@ class Subscriber(object):
 
 if __name__ == '__main__':
 	subscriber = Subscriber()
-
-
