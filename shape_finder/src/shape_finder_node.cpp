@@ -46,7 +46,7 @@
 #include <visualization_msgs/Marker.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 
-using namespace std::chrono_literals;
+using namespace shape_finder;
 class ShapeFinderNode
 {
 public:
@@ -189,13 +189,7 @@ public:
     printf("cylinder overlap: %f\n", overlap_c);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_colored_cluster(new pcl::PointCloud<pcl::PointXYZRGB>);
 
-    if ((overlap_s > overlap_p) && (overlap_s > overlap_c) && (overlap_s > th) && (size_cloud_s > min_cloud_size))
-    {
-      cluster_shape = 2;
-      pcl::copyPointCloud(*cloud_s, *cloud_colored_cluster);
-    }
-
-    if ((overlap_p > overlap_s) && (overlap_p > overlap_c * 3 / 2) && (overlap_p > th) && (size_cloud_p > min_cloud_size))
+    if ((overlap_p > overlap_s) && (overlap_p > overlap_c ) && (overlap_p > th) && (size_cloud_p > min_cloud_size))
     {
       cluster_shape = 1;
       pcl::copyPointCloud(*cloud_p, *cloud_colored_cluster);
@@ -222,12 +216,19 @@ public:
         vertical = 1;
     }
 
-    if ((overlap_c > overlap_s) && (overlap_c > overlap_p) && (overlap_c > th) && (size_cloud_c > min_cloud_size * 2 / 3))
+    if ((overlap_s > overlap_p) && (overlap_s > overlap_c) && (overlap_s > th) && (size_cloud_s > min_cloud_size))
+    {
+      cluster_shape = 2;
+      pcl::copyPointCloud(*cloud_s, *cloud_colored_cluster);
+    }
+
+    if ((overlap_c > overlap_s) && (overlap_c > overlap_p) && (overlap_c > th) && (size_cloud_c > min_cloud_size ))
     {
       cluster_shape = 3;
       pcl::copyPointCloud(*cloud_c, *cloud_colored_cluster);
     }
 
+    
     std::uint8_t r = 0, g = 0, b = 0;
 
     switch (cluster_shape)
@@ -499,6 +500,8 @@ public:
     RadiusLimitsMaxC = config.RadiusLimitsMaxCylinder;           //0.5
     StddevMulThresh = config.StddevMulThresh;                    //1.0
     MeanK = config.MeanK;                                        //50
+    gravity_damp = config.gravity_damp;
+    gravity_filtered = config.gravity_filtered;
   }
 
   void
@@ -543,7 +546,7 @@ public:
       gravity0[1] = msg->linear_acceleration.y;
       gravity0[2] = msg->linear_acceleration.z;
       gravity0.normalize();
-      for (int i = 0; i < gravity_damp; i++)
+      for (int i = 0; i < 100; i++)
       {
         gravity_p[i][0] = msg->linear_acceleration.x;
         gravity_p[i][1] = msg->linear_acceleration.y;
@@ -651,7 +654,7 @@ private:
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "shapefinder_node");
+  ros::init(argc, argv, "shape_finder");
   ShapeFinderNode sf;
   ros::spin();
 }
