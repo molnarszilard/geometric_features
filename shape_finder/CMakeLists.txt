@@ -10,9 +10,10 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
   geometry_msgs
-  tf
   topic_tools
   visualization_msgs
+  nodelet
+  pluginlib
 )
 
 ## System dependencies are found with CMake's conventions
@@ -100,10 +101,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 
 generate_dynamic_reconfigure_options(
-#  cfg/voxel_filter_node.cfg
-#  cfg/passthrough_filter_node.cfg
-#  cfg/plane_segmentation_node.cfg
-  cfg/shape_finder_node.cfg
+  #cfg/shape_finder_node.cfg
+  cfg/shape_finder_nodelet.cfg
+  cfg/voxel_filter_nodelet.cfg
+  cfg/gravity_nodelet.cfg
 )
 
 
@@ -118,8 +119,8 @@ generate_dynamic_reconfigure_options(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES my_pcl_tutorial
-#  CATKIN_DEPENDS pcl_conversions pcl_ros roscpp sensor_msgs
+  LIBRARIES shape_finder_lib
+  CATKIN_DEPENDS pcl_conversions pcl_ros roscpp sensor_msgs geometry_msgs topic_tools visualization_msgs nodelet pluginlib
 #  DEPENDS system_lib
 )
 
@@ -158,22 +159,34 @@ include_directories(
 #   ${catkin_LIBRARIES}
 # )
 
-#add_executable(voxel_filter_node src/voxel_filter_node.cpp)
-#add_executable(passthrough_filter_node src/passthrough_filter_node.cpp)
-#add_executable(plane_segmentation_node src/plane_segmentation_node.cpp)
-#add_executable(trianglemesh_node src/trianglemesh_node.cpp)
-add_executable (shape_finder_node src/shape_finder_node.cpp)
+#add_executable (shape_finder_node src/shape_finder_node.cpp)
+add_library (shape_finder_lib src/ShapeFinderNodelet.cpp src/VoxelFilterNodelet.cpp src/GravityNodelet.cpp)
+#add_library (shape_finder_lib src/VoxelFilterNodelet.cpp)
+#add_library (shape_finder_lib src/GravityNodelet.cpp)
 
-#target_link_libraries(voxel_filter_node ${catkin_LIBRARIES} ${Boost_LIBRARIES})
-#target_link_libraries(passthrough_filter_node ${catkin_LIBRARIES} ${Boost_LIBRARIES})
-#target_link_libraries(plane_segmentation_node ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${PCL_LIBRARIES})
-#target_link_libraries(trianglemesh_node ${catkin_LIBRARIES} ${Boost_LIBRARIES} ${PCL_LIBRARIES})
-target_link_libraries (shape_finder_node ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
+#target_link_libraries (shape_finder_node ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
+target_link_libraries (shape_finder_lib ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
+#target_link_libraries (shape_finder_lib ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
+#target_link_libraries (shape_finder_lib ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
 
-#add_dependencies(voxel_filter_node ${PROJECT_NAME}_gencfg)
-#add_dependencies(passthrough_filter_node ${PROJECT_NAME}_gencfg)
-#add_dependencies(plane_segmentation_node ${PROJECT_NAME}_gencfg)
-#add_dependencies(trianglemesh_node ${PROJECT_NAME}_gencfg)
-add_dependencies(shape_finder_node ${PROJECT_NAME}_gencfg)
+if(catkin_EXPORTED_LIBRARIES)
+  add_dependencies(shape_finder_lib ${catkin_EXPORTED_LIBRARIES})
+  #add_dependencies(VoxelFilterNodelet ${catkin_EXPORTED_LIBRARIES})
+  #add_dependencies(GravityNodelet ${catkin_EXPORTED_LIBRARIES})
+endif()
 
+## Mark the nodelet library for installations
+install(TARGETS shape_finder_lib
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+## Mark other files for installation (e.g. launch and bag files, etc.)
+install(FILES nodelet_plugins.xml launch/find_shapes_nodelets.launch
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+
+#add_dependencies(shape_finder_node ${PROJECT_NAME}_gencfg)
+add_dependencies(shape_finder_lib ${PROJECT_NAME}_gencfg)
+#add_dependencies(VoxelFilterNodelet ${PROJECT_NAME}_gencfg)
+#add_dependencies(GravityNodelet ${PROJECT_NAME}_gencfg)
 
