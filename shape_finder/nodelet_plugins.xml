@@ -1,18 +1,11 @@
-
-<library path="lib/libshape_finder_lib">
-  <class name="shape_finder/ShapeFinderNodelet"
-         type="shape_finder::ShapeFinderNodelet"
-         base_class_type="nodelet::Nodelet">
-    <description>Shape finder nodelet.</description>
-  </class>
-  <class name="shape_finder/VoxelFilterNodelet"
-         type="shape_finder::VoxelFilterNodelet"
-         base_class_type="nodelet::Nodelet">
-    <description>Voxel filter nodelet.</description>
-  </class>
-  <class name="shape_finder/GravityNodelet"
-         type="shape_finder::GravityNodelet"
-         base_class_type="nodelet::Nodelet">
-    <description>Gravity nodelet.</description>
-  </class>
+<library path="lib/libshape_finder">
+<class name="shape_finder/ShapeFinderNodelet" type="shape_finder::ShapeFinderNodelet" base_class_type="nodelet::Nodelet">
+<description>Shape finder nodelet.</description>
+</class>
+<class name="shape_finder/VoxelFilterNodelet" type="shape_finder::VoxelFilterNodelet" base_class_type="nodelet::Nodelet">
+<description>Voxel filter nodelet.</description>
+</class>
+<class name="shape_finder/GravityNodelet" type="shape_finder::GravityNodelet" base_class_type="nodelet::Nodelet">
+<description>Gravity nodelet.</description>
+</class>
 </library>
