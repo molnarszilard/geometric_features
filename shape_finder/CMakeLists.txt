@@ -5,6 +5,7 @@ project(shape_finder)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
+  dynamic_reconfigure
   pcl_conversions
   pcl_ros
   roscpp
@@ -101,10 +102,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 
 generate_dynamic_reconfigure_options(
-  #cfg/shape_finder_node.cfg
-  cfg/shape_finder_nodelet.cfg
-  cfg/voxel_filter_nodelet.cfg
-  cfg/gravity_nodelet.cfg
+  cfg/shape_finder.cfg
+  #cfg/ShapeFinderNodelet.cfg
+  #cfg/VoxelFilterNodelet.cfg
+  #cfg/GravityNodelet.cfg
 )
 
 
@@ -119,7 +120,7 @@ generate_dynamic_reconfigure_options(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-  LIBRARIES shape_finder_lib
+  LIBRARIES shape_finder
   CATKIN_DEPENDS pcl_conversions pcl_ros roscpp sensor_msgs geometry_msgs topic_tools visualization_msgs nodelet pluginlib
 #  DEPENDS system_lib
 )
@@ -160,23 +161,23 @@ include_directories(
 # )
 
 #add_executable (shape_finder_node src/shape_finder_node.cpp)
-add_library (shape_finder_lib src/ShapeFinderNodelet.cpp src/VoxelFilterNodelet.cpp src/GravityNodelet.cpp)
+add_library (shape_finder src/ShapeFinderNodelet.cpp src/VoxelFilterNodelet.cpp src/GravityNodelet.cpp)
 #add_library (shape_finder_lib src/VoxelFilterNodelet.cpp)
 #add_library (shape_finder_lib src/GravityNodelet.cpp)
 
 #target_link_libraries (shape_finder_node ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
-target_link_libraries (shape_finder_lib ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
+target_link_libraries (shape_finder ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
 #target_link_libraries (shape_finder_lib ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
 #target_link_libraries (shape_finder_lib ${PCL_LIBRARIES} ${Boost_LIBRARIES} ${catkin_LIBRARIES})
 
 if(catkin_EXPORTED_LIBRARIES)
-  add_dependencies(shape_finder_lib ${catkin_EXPORTED_LIBRARIES})
+  add_dependencies(shape_finder ${catkin_EXPORTED_LIBRARIES})
   #add_dependencies(VoxelFilterNodelet ${catkin_EXPORTED_LIBRARIES})
   #add_dependencies(GravityNodelet ${catkin_EXPORTED_LIBRARIES})
 endif()
 
 ## Mark the nodelet library for installations
-install(TARGETS shape_finder_lib
+install(TARGETS shape_finder
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
@@ -186,7 +187,7 @@ install(FILES nodelet_plugins.xml launch/find_shapes_nodelets.launch
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 
 #add_dependencies(shape_finder_node ${PROJECT_NAME}_gencfg)
-add_dependencies(shape_finder_lib ${PROJECT_NAME}_gencfg)
+add_dependencies(shape_finder ${PROJECT_NAME}_gencfg)
 #add_dependencies(VoxelFilterNodelet ${PROJECT_NAME}_gencfg)
 #add_dependencies(GravityNodelet ${PROJECT_NAME}_gencfg)
 
